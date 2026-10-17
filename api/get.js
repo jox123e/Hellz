@@ -1,3 +1,4 @@
+
 const ROBLOX_ASSETS = "https://apis.roblox.com/assets/v1";
 
 function send(res, status, data) {
@@ -6,19 +7,13 @@ function send(res, status, data) {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("X-Content-Type-Options", "nosniff");
     return res.status(status).json(data);
 }
 
 module.exports = async function handler(req, res) {
-    if (req.method === "OPTIONS") return send(res, 200, { ok: true });
-
-    if (req.method === "GET") {
-        return send(res, 200, {
-            ok: true,
-            route: "/api/get",
-            method: "POST required",
-            runtime: "nodejs"
-        });
+    if (req.method === "OPTIONS") {
+        return send(res, 200, { ok: true });
     }
 
     if (req.method !== "POST") {
@@ -26,23 +21,32 @@ module.exports = async function handler(req, res) {
     }
 
     try {
-        const data = req.body && typeof req.body === "object" ? req.body : {};
-        const apiKey = typeof data.apiKey === "string" ? data.apiKey.trim() : "";
-        const assetId = String(data.assetId || "").trim();
+        const body = req.body && typeof req.body === "object"
+            ? req.body
+            : {};
 
-        if (!apiKey || !/^\d+$/.test(assetId)) {
-            return send(res, 400, {
-                ok: false,
-                error: "Falta apiKey o assetId inválido"
-            });
+        const apiKey = typeof body.apiKey === "string"
+            ? body.apiKey.trim()
+            : "";
+
+        const assetId = String(body.assetId || "").trim();
+
+        if (!apiKey) {
+            return send(res, 400, { error: "Falta apiKey" });
+        }
+
+        if (!/^\d+$/.test(assetId)) {
+            return send(res, 400, { error: "assetId no es válido" });
         }
 
         const upstream = await fetch(
-            `${ROBLOX_ASSETS}/assets/${encodeURIComponent(assetId)}?readMask=moderationResult`,
+            `${ROBLOX_ASSETS}/assets/${encodeURIComponent(assetId)}`,
             {
                 method: "GET",
-                headers: { "x-api-key": apiKey },
-                signal: AbortSignal.timeout(20000)
+                headers: {
+                    "x-api-key": apiKey
+                },
+                signal: AbortSignal.timeout(15000)
             }
         );
 
@@ -53,51 +57,48 @@ module.exports = async function handler(req, res) {
             result = JSON.parse(raw);
         } catch {
             return send(res, 502, {
-                ok: false,
-                assetId,
+                success: false,
                 error: "Roblox devolvió una respuesta no JSON",
                 upstreamStatus: upstream.status,
-                upstreamBody: raw.slice(0, 2000)
+                upstreamBody: raw.slice(0, 1000)
             });
         }
 
         if (!upstream.ok) {
-            console.error("[GET] Roblox error:", upstream.status, JSON.stringify(result));
-
             return send(res, upstream.status, {
-                ok: false,
-                assetId,
-                error: result.message || result.error?.message ||
-                    result.error || `Roblox respondió HTTP ${upstream.status}`,
+                success: false,
+                error: result.message ||
+                    result.error?.message ||
+                    result.error ||
+                    `Roblox respondió HTTP ${upstream.status}`,
                 upstreamStatus: upstream.status,
                 upstreamResponse: result
             });
         }
 
-        const moderation = result.moderationResult || {};
-        const moderationState =
-            moderation.moderationState ||
-            result.moderationState ||
-            "Unknown";
-
-        console.log("[GET] Asset consultado:", assetId, moderationState);
-
         return send(res, 200, {
-            ok: true,
+            success: true,
             assetId,
             assetUrl: `https://www.roblox.com/library/${assetId}`,
-            moderationState,
-            moderationResult: moderation,
-            asset: result
+            displayName: result.displayName || null,
+            description: result.description || null,
+            assetType: result.assetType || null,
+            moderationState:
+                result.moderationResult?.moderationState || null,
+            response: result
         });
     } catch (error) {
-        console.error("[GET] Error:", error);
+        console.error("[GET ASSET]", error?.message || error);
 
-        return send(res, 502, {
-            ok: false,
-            error: error?.name === "TimeoutError"
-                ? "Roblox tardó demasiado en responder"
-                : "No se pudo consultar el asset en Roblox"
-        });
+        return send(
+            res,
+            error?.name === "TimeoutError" ? 504 : 502,
+            {
+                success: false,
+                error: error?.name === "TimeoutError"
+                    ? "Roblox tardó demasiado en responder"
+                    : "No se pudo consultar el asset"
+            }
+        );
     }
 };
