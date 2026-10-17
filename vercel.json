@@ -1,5 +1,6 @@
 {
-  "rewrites": [
-    { "source": "/getdata/auth", "destination": "/api/auth" }
-  ]
+  "functions": {
+    "api/upload.py": { "maxDuration": 60 },
+    "api/status.py": { "maxDuration": 30 }
+  }
 }

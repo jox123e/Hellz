@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Roblox Asset Uploader</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#101218;color:#f3f4f6;
+font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:20px}
+main{max-width:520px;margin:25px auto;background:#1b1e27;
+padding:22px;border-radius:18px;border:1px solid #343846}
+h2{margin-top:0}
+p{color:#aeb4c3;font-size:14px;line-height:1.5}
+label{display:block;margin-top:17px;margin-bottom:7px;font-size:14px}
+input,select,textarea,button{width:100%;padding:12px;
+border-radius:9px;border:1px solid #414656;background:#11141b;
+color:white;font-size:15px}
+textarea{min-height:100px;resize:vertical}
+input[type=file]{font-size:13px}
+input[type=checkbox]{width:auto;margin-right:8px}
+.check{display:flex;align-items:flex-start;gap:4px;font-size:13px;
+color:#d5d9e4;margin-top:20px}
+.check input{margin-top:3px}
+button{margin-top:22px;background:#1684ff;border:0;
+font-weight:bold;cursor:pointer}
+button:disabled{opacity:.5;cursor:not-allowed}
+#status{margin-top:18px;white-space:pre-wrap;overflow-wrap:anywhere;
+font-size:14px;line-height:1.6}
+#status.ok{color:#5ee0a0}
+#status.err{color:#ff7a6b}
+.small{font-size:12px;color:#929aab}
+</style>
+</head>
+<body>
+<main>
+<h2>Roblox Asset Uploader</h2>
+<p>Demostración del Assets API de Open Cloud: sube un archivo a tu propia cuenta de Roblox y recibe su assetId.</p>
+
+<form id="uploadForm">
+<label for="ownerId">User ID (o Group ID)</label>
+<input id="ownerId" name="ownerId" inputmode="numeric" required
+placeholder="Ej. 9936295715">
+
+<label for="ownerType">El ID anterior es de</label>
+<select id="ownerType" name="ownerType">
+<option value="user">Usuario</option>
+<option value="group">Grupo</option>
+</select>
+
+<label for="apiKey">API Key</label>
+<input id="apiKey" name="apiKey" type="password" required
+autocomplete="off" placeholder="Roblox Open Cloud API Key">
+
+<label for="assetType">Asset Type</label>
+<select id="assetType" name="assetType">
+<option value="Model">Model</option>
+<option value="Decal">Decal</option>
+<option value="Image">Image</option>
+<option value="Audio">Audio</option>
+<option value="Mesh">Mesh</option>
+<option value="Animation">Animation</option>
+</select>
+
+<label for="displayName">Name</label>
+<input id="displayName" name="displayName" maxlength="50" required
+placeholder="Nombre del asset">
+
+<label for="description">Description</label>
+<textarea id="description" name="description"
+placeholder="Descripción del asset (opcional)"></textarea>
+
+<label for="file">File (máx. 4 MB)</label>
+<input id="file" name="file" type="file" required>
+
+<p class="small">Para Model, selecciona un archivo .rbxm o .rbxmx.
+Los demás tipos requieren formatos compatibles con Roblox.</p>
+
+<div class="check">
+<input id="agree" type="checkbox">
+<label for="agree" style="margin:0">Entiendo que el asset se sube a mi cuenta, que soy el único responsable de lo que subo y que Roblox puede sancionar mi cuenta si el contenido incumple sus normas.</label>
+</div>
+
+<button id="submitButton" type="submit" disabled>Upload Asset</button>
+</form>
+
+<div id="status" role="status"></div>
+
+<p class="small" style="margin-top:24px">Tu API key se envía solo a Roblox para esta subida. Este sitio no la guarda ni la registra. Crea una key solo con permiso de assets y bórrala al terminar.</p>
+</main>
+
+<script>
+const form = document.getElementById("uploadForm");
+const button = document.getElementById("submitButton");
+const agree = document.getElementById("agree");
+const status = document.getElementById("status");
+const MAX = 4 * 1024 * 1024;
+
+agree.addEventListener("change", () => {
+    button.disabled = !agree.checked;
+});
+
+function show(text, kind) {
+    status.textContent = text;
+    status.className = kind || "";
+}
+
+function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const file = form.elements.file.files[0];
+    if (!file) return show("Selecciona un archivo.", "err");
+    if (file.size > MAX) return show("El archivo supera los 4 MB.", "err");
+
+    if (form.elements.assetType.value === "Model" &&
+        !/\.(rbxm|rbxmx)$/i.test(file.name)) {
+        return show("Model necesita un archivo .rbxm o .rbxmx.", "err");
+    }
+
+    button.disabled = true;
+    show("Subiendo archivo...");
+
+    try {
+        const response = await fetch("/api/upload", {
+            method: "POST",
+            body: new FormData(form)
+        });
+        const result = await response.json();
+
+        if (!response.ok || !result.operation) {
+            return show(result.error || "No se pudo subir el archivo.", "err");
+        }
+
+        const apiKey = form.elements.apiKey.value.trim();
+
+        for (let i = 0; i < 40; i++) {
+            show("Roblox está procesando el asset... (" + (i + 1) + ")");
+            await wait(3000);
+
+            const check = await fetch("/api/status", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ apiKey, operation: result.operation })
+            });
+            const data = await check.json();
+
+            if (!check.ok || data.error) {
+                return show(data.error || "Error consultando el estado.", "err");
+            }
+            if (data.done) {
+                return show("Listo. assetId: " + data.assetId, "ok");
+            }
+        }
+
+        show("Roblox sigue procesando el asset. Revisa tu inventario en unos minutos.");
+    } catch (error) {
+        show("Error de conexión: " + error.message, "err");
+    } finally {
+        button.disabled = !agree.checked;
+    }
+});
+</script>
+</body>
+</html>
