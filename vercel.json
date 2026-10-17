@@ -1,6 +1,7 @@
 {
   "functions": {
     "api/upload.py": { "maxDuration": 60 },
-    "api/status.py": { "maxDuration": 30 }
+    "api/status.py": { "maxDuration": 30 },
+    "api/get.py": { "maxDuration": 20 }
   }
 }
