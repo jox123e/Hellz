@@ -19,9 +19,7 @@ function validPublicIp(ip) {
 
         if (s.startsWith("::ffff:")) {
             const mapped = s.slice(7);
-            if (mapped.includes(".")) {
-                return validPublicIp(mapped);
-            }
+            if (mapped.includes(".")) return validPublicIp(mapped);
         }
 
         return !(
@@ -64,20 +62,12 @@ async function validateFileUrl(raw) {
         throw new Error("fileUrl no es una URL válida");
     }
 
-    if (
-        url.protocol !== "https:" ||
-        url.username ||
-        url.password
-    ) {
-        throw new Error(
-            "fileUrl debe usar HTTPS y no incluir credenciales"
-        );
+    if (url.protocol !== "https:" || url.username || url.password) {
+        throw new Error("fileUrl debe usar HTTPS y no incluir credenciales");
     }
 
     if (!/\.(rbxm|rbxmx)$/i.test(url.pathname)) {
-        throw new Error(
-            "El enlace debe terminar en .rbxm o .rbxmx"
-        );
+        throw new Error("El enlace debe terminar en .rbxm o .rbxmx");
     }
 
     const host = url.hostname.toLowerCase();
@@ -92,18 +82,12 @@ async function validateFileUrl(raw) {
     }
 
     const { lookup } = await import("node:dns/promises");
-
     let addresses;
 
     try {
-        addresses = await lookup(host, {
-            all: true,
-            verbatim: true
-        });
+        addresses = await lookup(host, { all: true, verbatim: true });
     } catch {
-        throw new Error(
-            "No se pudo resolver el host de fileUrl"
-        );
+        throw new Error("No se pudo resolver el host de fileUrl");
     }
 
     if (
@@ -118,9 +102,7 @@ async function validateFileUrl(raw) {
 
 function validateModelBuffer(buffer, filename) {
     if (!buffer || buffer.length < 8) {
-        throw new Error(
-            "El archivo está vacío o es demasiado pequeño"
-        );
+        throw new Error("El archivo está vacío o es demasiado pequeño");
     }
 
     const header = buffer
@@ -136,9 +118,7 @@ function validateModelBuffer(buffer, filename) {
         header.startsWith("<head") ||
         header.startsWith("<body")
     ) {
-        throw new Error(
-            "fileUrl devolvió HTML en lugar de un modelo Roblox"
-        );
+        throw new Error("fileUrl devolvió HTML en lugar de un modelo Roblox");
     }
 
     const isBinary =
@@ -152,16 +132,61 @@ function validateModelBuffer(buffer, filename) {
     const isRbxm = filename.toLowerCase().endsWith(".rbxm");
 
     if (isRbxmx && !isXml) {
-        throw new Error(
-            "El archivo .rbxmx no parece ser XML de Roblox"
-        );
+        throw new Error("El archivo .rbxmx no parece ser XML de Roblox");
     }
 
     if (isRbxm && !isBinary) {
-        throw new Error(
-            "El archivo .rbxm no tiene la cabecera binaria esperada"
-        );
+        throw new Error("El archivo .rbxm no tiene la cabecera binaria esperada");
     }
+}
+
+function findAssetId(value, depth = 0) {
+    if (!value || typeof value !== "object" || depth > 10) {
+        return null;
+    }
+
+    if (
+        value.assetId != null &&
+        /^\d+$/.test(String(value.assetId))
+    ) {
+        return String(value.assetId);
+    }
+
+    if (typeof value.path === "string") {
+        const match = value.path.match(/(?:^|\/)assets\/(\d+)\/?$/);
+        if (match) return match[1];
+    }
+
+    for (const key of ["response", "asset", "result", "data"]) {
+        const found = findAssetId(value[key], depth + 1);
+        if (found) return found;
+    }
+
+    return null;
+}
+
+function findOperation(value) {
+    if (!value || typeof value !== "object") return null;
+
+    for (const candidate of [
+        value.operationId,
+        value.operation,
+        value.path
+    ]) {
+        if (
+            typeof candidate === "string" &&
+            /^operations\/[A-Za-z0-9_-]+$/.test(candidate)
+        ) {
+            return candidate.slice("operations/".length);
+        }
+    }
+
+    for (const key of ["response", "result", "data"]) {
+        const found = findOperation(value[key]);
+        if (found) return found;
+    }
+
+    return null;
 }
 
 module.exports = async function handler(req, res) {
@@ -179,9 +204,7 @@ module.exports = async function handler(req, res) {
     }
 
     if (req.method !== "POST") {
-        return send(res, 405, {
-            error: "Usa POST"
-        });
+        return send(res, 405, { error: "Usa POST" });
     }
 
     try {
@@ -191,24 +214,18 @@ module.exports = async function handler(req, res) {
                 : {};
 
         const apiKey =
-            typeof data.apiKey === "string"
-                ? data.apiKey.trim()
-                : "";
+            typeof data.apiKey === "string" ? data.apiKey.trim() : "";
 
         const ownerId = String(data.ownerId || "").trim();
         const ownerType = data.ownerType || "user";
         const fileUrl = String(data.fileUrl || "").trim();
 
         if (!apiKey) {
-            return send(res, 400, {
-                error: "Falta apiKey"
-            });
+            return send(res, 400, { error: "Falta apiKey" });
         }
 
         if (!/^\d+$/.test(ownerId)) {
-            return send(res, 400, {
-                error: "ownerId debe ser numérico"
-            });
+            return send(res, 400, { error: "ownerId debe ser numérico" });
         }
 
         if (!["user", "group"].includes(ownerType)) {
@@ -217,11 +234,9 @@ module.exports = async function handler(req, res) {
             });
         }
 
-        const assetType = String(data.assetType || "Model");
-
-        if (assetType !== "Model") {
+        if (String(data.assetType || "Model") !== "Model") {
             return send(res, 400, {
-                error: "Este endpoint está configurado para subir modelos (Model)"
+                error: "Este endpoint solo permite subir modelos (Model)"
             });
         }
 
@@ -230,27 +245,24 @@ module.exports = async function handler(req, res) {
         try {
             file = await validateFileUrl(fileUrl);
         } catch (error) {
-            return send(res, 400, {
-                error: error.message
-            });
+            return send(res, 400, { error: error.message });
         }
 
+        // Permite redirecciones HTTPS habituales de servicios de archivos.
         const downloaded = await fetch(file, {
-            redirect: "manual",
+            redirect: "follow",
             signal: AbortSignal.timeout(25000)
         });
 
-        if (downloaded.status >= 300 && downloaded.status < 400) {
+        if (!downloaded.ok) {
             return send(res, 400, {
-                error:
-                    "fileUrl devolvió una redirección. Usa el enlace HTTPS directo al archivo."
+                error: `No se pudo descargar el archivo (HTTP ${downloaded.status}).`
             });
         }
 
-        if (!downloaded.ok) {
+        if (downloaded.url && !downloaded.url.startsWith("https://")) {
             return send(res, 400, {
-                error:
-                    `No se pudo descargar el archivo (HTTP ${downloaded.status}).`
+                error: "La descarga terminó en una URL que no usa HTTPS"
             });
         }
 
@@ -264,14 +276,10 @@ module.exports = async function handler(req, res) {
             });
         }
 
-        const fileBuffer = Buffer.from(
-            await downloaded.arrayBuffer()
-        );
+        const fileBuffer = Buffer.from(await downloaded.arrayBuffer());
 
         if (!fileBuffer.length) {
-            return send(res, 400, {
-                error: "El archivo descargado está vacío"
-            });
+            return send(res, 400, { error: "El archivo descargado está vacío" });
         }
 
         if (fileBuffer.length > MAX_FILE_SIZE) {
@@ -280,9 +288,15 @@ module.exports = async function handler(req, res) {
             });
         }
 
-        const filename = decodeURIComponent(
-            file.pathname.split("/").pop() || "model.rbxmx"
-        );
+        let filename;
+
+        try {
+            filename = decodeURIComponent(
+                file.pathname.split("/").pop() || "model.rbxmx"
+            );
+        } catch {
+            filename = file.pathname.split("/").pop() || "model.rbxmx";
+        }
 
         try {
             validateModelBuffer(fileBuffer, filename);
@@ -299,56 +313,50 @@ module.exports = async function handler(req, res) {
             displayName: String(
                 data.name || data.displayName || "myfile"
             ).slice(0, 50),
-            description: String(
-                data.description || ""
-            ).slice(0, 1000),
+            description: String(data.description || "").slice(0, 1000),
             creationContext: {
-                creator:
-                    ownerType === "group"
-                        ? { groupId: ownerId }
-                        : { userId: ownerId }
+                creator: ownerType === "group"
+                    ? { groupId: ownerId }
+                    : { userId: ownerId }
             }
         };
 
         const form = new FormData();
-
         form.append("request", JSON.stringify(metadata));
-
         form.append(
             "fileContent",
-            new Blob([fileBuffer], {
-                type: "model/x-rbxm"
-            }),
+            new Blob([fileBuffer], { type: "model/x-rbxm" }),
             filename
         );
 
-        const response = await fetch(
-            `${ROBLOX_ASSETS}/assets`,
-            {
-                method: "POST",
-                headers: {
-                    "x-api-key": apiKey
-                },
-                body: form,
-                signal: AbortSignal.timeout(55000)
-            }
-        );
+        console.log("[UPLOAD] Archivo validado:", {
+            filename,
+            fileSize: fileBuffer.length,
+            ownerType,
+            ownerId
+        });
+
+        const response = await fetch(`${ROBLOX_ASSETS}/assets`, {
+            method: "POST",
+            headers: { "x-api-key": apiKey },
+            body: form,
+            signal: AbortSignal.timeout(55000)
+        });
 
         const raw = await response.text();
-
         let result;
 
         try {
             result = JSON.parse(raw);
         } catch {
-            result = {
-                message: raw.slice(0, 1000)
-            };
+            result = { message: raw.slice(0, 1000) };
         }
+
+        console.log("[UPLOAD] HTTP Roblox:", response.status);
 
         if (!response.ok) {
             console.error(
-                "Roblox upload error:",
+                "[UPLOAD] Roblox error:",
                 response.status,
                 JSON.stringify(result)
             );
@@ -363,34 +371,51 @@ module.exports = async function handler(req, res) {
             });
         }
 
-        let operation =
-            result.path ||
-            result.operation ||
-            result.operationId;
+        const assetId = findAssetId(result);
+        const operation = findOperation(result);
 
-        if (
-            typeof operation === "string" &&
-            operation.startsWith("operations/")
-        ) {
-            operation = operation.slice("operations/".length);
-        }
+        console.log("[UPLOAD] Resultado:", JSON.stringify({
+            assetId,
+            operation,
+            responseKeys: Object.keys(result || {})
+        }));
 
-        if (
-            typeof operation !== "string" ||
-            !operation
-        ) {
-            return send(res, 502, {
-                error:
-                    "Roblox no devolvió una operación reconocible",
-                details: result
+        // Si Roblox ya entregó el ID, devolverlo directamente.
+        if (assetId) {
+            return send(res, 200, {
+                success: true,
+                done: true,
+                assetId,
+                assetUrl: `https://www.roblox.com/library/${assetId}`,
+                operation: operation || null,
+                response: result
             });
         }
 
-        return send(res, 200, {
-            operation
+        // Si Roblox devuelve una operación, el endpoint /status
+        // debe consultar su finalización.
+        if (operation) {
+            return send(res, 200, {
+                success: true,
+                done: false,
+                operation,
+                assetId: null,
+                response: result
+            });
+        }
+
+        console.error(
+            "[UPLOAD] Respuesta sin assetId ni operación:",
+            JSON.stringify(result)
+        );
+
+        return send(res, 502, {
+            success: false,
+            error: "Roblox no devolvió assetId ni un identificador de operación",
+            details: result
         });
     } catch (error) {
-        console.error("Upload error:", error);
+        console.error("[UPLOAD] Error interno:", error);
 
         const isTimeout = error?.name === "TimeoutError";
 
