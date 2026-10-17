@@ -10,23 +10,31 @@ function send(res, status, data) {
   return res.status(status).json(data);
 }
 
-function findAssetId(value) {
-  if (!value || typeof value !== "object") return null;
+function findAssetId(value, depth = 0) {
+  if (!value || typeof value !== "object" || depth > 10) {
+    return null;
+  }
 
-  if (value.assetId != null && /^\d+$/.test(String(value.assetId))) {
+  if (
+    value.assetId != null &&
+    /^\d+$/.test(String(value.assetId))
+  ) {
     return String(value.assetId);
   }
 
   if (typeof value.path === "string") {
     const match = value.path.match(/(?:^|\/)assets\/(\d+)\/?$/);
     if (match) return match[1];
-
-    const id = value.path.match(/\/(\d+)\/?$/);
-    if (id) return id[1];
   }
 
-  for (const key of ["response", "asset", "result", "data"]) {
-    const found = findAssetId(value[key]);
+  for (const key of [
+    "response",
+    "asset",
+    "result",
+    "data",
+    "operation"
+  ]) {
+    const found = findAssetId(value[key], depth + 1);
     if (found) return found;
   }
 
@@ -48,17 +56,21 @@ module.exports = async function handler(req, res) {
   }
 
   if (req.method !== "POST") {
-    return send(res, 405, { error: "Usa POST" });
+    return send(res, 405, {
+      error: "Usa POST"
+    });
   }
 
   try {
-    const body = req.body && typeof req.body === "object"
-      ? req.body
-      : {};
+    const body =
+      req.body && typeof req.body === "object"
+        ? req.body
+        : {};
 
-    const apiKey = typeof body.apiKey === "string"
-      ? body.apiKey.trim()
-      : "";
+    const apiKey =
+      typeof body.apiKey === "string"
+        ? body.apiKey.trim()
+        : "";
 
     let operation = String(body.operation || "").trim();
 
@@ -76,16 +88,18 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    const upstream = await fetch(
-      `${ROBLOX_ASSETS}/operations/${encodeURIComponent(operation)}`,
-      {
-        method: "GET",
-        headers: {
-          "x-api-key": apiKey
-        },
-        signal: AbortSignal.timeout(20000)
-      }
-    );
+    const url =
+      `${ROBLOX_ASSETS}/operations/${encodeURIComponent(operation)}`;
+
+    console.log("[STATUS] Consultando operación:", operation);
+
+    const upstream = await fetch(url, {
+      method: "GET",
+      headers: {
+        "x-api-key": apiKey
+      },
+      signal: AbortSignal.timeout(20000)
+    });
 
     const raw = await upstream.text();
 
@@ -94,7 +108,10 @@ module.exports = async function handler(req, res) {
     try {
       result = JSON.parse(raw);
     } catch {
-      console.error("Respuesta no JSON de Roblox:", raw.slice(0, 2000));
+      console.error(
+        "[STATUS] Roblox devolvió contenido no JSON:",
+        raw.slice(0, 2000)
+      );
 
       return send(res, 502, {
         error: "Roblox devolvió una respuesta que no es JSON",
@@ -103,12 +120,20 @@ module.exports = async function handler(req, res) {
       });
     }
 
+    console.log("[STATUS] HTTP Roblox:", upstream.status);
+
     if (!upstream.ok) {
-      console.error("Error Roblox:", upstream.status, result);
+      console.error(
+        "[STATUS] Error de Roblox:",
+        JSON.stringify(result)
+      );
 
       return send(res, upstream.status, {
-        error: result.message || result.error?.message ||
-          result.error || `Roblox respondió HTTP ${upstream.status}`,
+        error:
+          result.message ||
+          result.error?.message ||
+          result.error ||
+          `Roblox respondió HTTP ${upstream.status}`,
         upstreamStatus: upstream.status,
         upstreamResponse: result
       });
@@ -117,45 +142,63 @@ module.exports = async function handler(req, res) {
     const done = result.done === true;
     const assetId = findAssetId(result);
 
-    const operationError = result.error ||
+    const operationError =
+      result.error ||
       result.response?.error ||
-      result.response?.errorMessage;
-
-    if (done && operationError) {
-      return send(res, 200, {
-        done: true,
-        assetId: null,
-        error: operationError,
-        upstreamResponse: result
-      });
-    }
-
-    if (done && !assetId) {
-      console.error(
-        "Operación terminada sin assetId:",
-        JSON.stringify(result)
-      );
-    }
+      result.response?.errorMessage ||
+      null;
 
     const moderationState =
       result.response?.moderationResult?.moderationState ||
       result.moderationResult?.moderationState ||
       null;
 
+    console.log(
+      "[STATUS DIAGNOSTIC]",
+      JSON.stringify({
+        operation: result.path || operation,
+        done: result.done,
+        hasResponse: result.response != null,
+        assetId,
+        moderationState,
+        error: operationError,
+        fullResponse: result
+      })
+    );
+
+    if (done && operationError) {
+      return send(res, 200, {
+        done: true,
+        assetId: null,
+        error: operationError,
+        moderationState,
+        upstreamResponse: result
+      });
+    }
+
+    if (done && !assetId) {
+      console.error(
+        "[STATUS] Operación terminada sin assetId:",
+        JSON.stringify(result)
+      );
+    }
+
     return send(res, 200, {
       done,
       assetId,
       moderationState,
+      error: operationError,
       response: result.response ?? null,
       upstreamResponse: result
     });
   } catch (error) {
-    console.error("Error en /api/status:", error);
+    console.error("[STATUS] Error:", error);
 
     return send(res, 502, {
-      error: error.name === "TimeoutError"
-        ? "Roblox tardó demasiado en responder"
-        : "No se pudo consultar la operación en Roblox"
+      error:
+        error.name === "TimeoutError"
+          ? "Roblox tardó demasiado en responder"
+          : "No se pudo consultar la operación en Roblox"
     });
   }
 };
