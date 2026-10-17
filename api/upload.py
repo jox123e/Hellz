@@ -69,7 +69,7 @@ class handler(BaseHTTPRequestHandler):
             owner_id = str(data.get("ownerId", "")).strip()
             owner_type = str(data.get("ownerType", "user")).strip()
             asset_type = str(data.get("assetType", "")).strip()
-            display_name = str(data.get("displayName", "")).strip()
+            display_name = str(data.get("displayName", "")).strip() or "myfile"
             description = str(data.get("description", "")).strip()
             file_name = str(data.get("fileName", "")).strip()
             file_base64 = data.get("fileBase64")
@@ -88,8 +88,6 @@ class handler(BaseHTTPRequestHandler):
                 raise ValueError("ownerId debe contener solo números.")
             if asset_type not in TYPES:
                 raise ValueError("assetType no válido.")
-            if not display_name:
-                raise ValueError("Falta displayName.")
             if not file_name or not raw:
                 raise ValueError("Falta el archivo.")
             if len(raw) > MAX_SIZE:
