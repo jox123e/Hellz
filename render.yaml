@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: roblox-model-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --workers 2 --threads 4 --timeout 120 app:app
+    envVars:
+      - key: ROBLOX_API_KEY
+        sync: false
+      - key: API_ACCESS_TOKEN
+        generateValue: true
