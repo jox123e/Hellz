@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>getdata/auth — estado del servicio</title>
+<style>
+  :root{
+    --bg: #0d1210;
+    --panel: #121a17;
+    --line: #22312b;
+    --text: #d8e3dd;
+    --dim: #7c9188;
+    --ok: #4fd38a;
+    --bad: #e2634f;
+    --mono: "JetBrains Mono", "SF Mono", "Consolas", monospace;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--mono);
+    font-size:15px;
+    line-height:1.6;
+    padding: env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0) 0;
+  }
+  .wrap{
+    max-width:720px;
+    margin:0 auto;
+    padding:56px 24px 80px;
+  }
+  .tag{
+    color:var(--dim);
+    font-size:13px;
+  }
+  h1{
+    font-size:22px;
+    font-weight:600;
+    margin:6px 0 4px;
+    letter-spacing:-0.01em;
+  }
+  .lede{
+    color:var(--dim);
+    margin:0 0 36px;
+    max-width:60ch;
+  }
+  .row{
+    display:flex;
+    align-items:baseline;
+    gap:10px;
+    padding:14px 0;
+    border-top:1px solid var(--line);
+  }
+  .row:last-of-type{border-bottom:1px solid var(--line);}
+  .k{color:var(--dim); min-width:120px; flex-shrink:0;}
+  .v{color:var(--text); word-break:break-all;}
+  .dot{
+    display:inline-block;
+    width:7px; height:7px;
+    border-radius:50%;
+    background:var(--ok);
+    margin-right:8px;
+    position:relative;
+    top:-1px;
+  }
+  .status{
+    margin-top:36px;
+    font-size:13px;
+    color:var(--dim);
+  }
+  .status .dot{box-shadow:0 0 0 3px rgba(79,211,138,.15);}
+  pre{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:16px 18px;
+    overflow-x:auto;
+    font-size:13px;
+    color:var(--text);
+    margin:12px 0 0;
+  }
+  .field{color:var(--dim);}
+  .foot{
+    margin-top:48px;
+    font-size:12px;
+    color:var(--dim);
+    border-top:1px solid var(--line);
+    padding-top:18px;
+  }
+  a{color:var(--text);}
+  a:focus-visible, button:focus-visible{outline:2px solid var(--ok); outline-offset:2px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="tag">servicio interno</div>
+  <h1>getdata/auth</h1>
+  <p class="lede">Recibe los datos del servidor de Roblox, compara name/display y reenvía un registro a Discord.</p>
+
+  <div class="row"><span class="k">método</span><span class="v">POST</span></div>
+  <div class="row"><span class="k">ruta</span><span class="v">/getdata/auth</span></div>
+  <div class="row"><span class="k">content-type</span><span class="v">application/json</span></div>
+  <div class="row"><span class="k">header</span><span class="v">x-auth-secret</span></div>
+
+  <pre>{
+  <span class="field">"userid"</span>: 9936295715,
+  <span class="field">"gameid"</span>: 113289549640925,
+  <span class="field">"placeid"</span>: 0,
+  <span class="field">"serverid"</span>: "job-id-aqui",
+  <span class="field">"ownerid"</span>: 0,
+  <span class="field">"name"</span>: "XfsEW45",
+  <span class="field">"display"</span>: "XfsEW45",
+  <span class="field">"players"</span>: 1
+}</pre>
+
+  <div class="status"><span class="dot"></span>endpoint activo — las peticiones se registran en Discord</div>
+
+  <div class="foot">Este servicio no tiene interfaz: existe solo para recibir peticiones del script de Roblox.</div>
+</div>
+</body>
+</html>
