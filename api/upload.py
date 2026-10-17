@@ -16,6 +16,9 @@ def json_response(handler, status, payload):
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    handler.send_header("Access-Control-Allow-Headers", "Content-Type")
     handler.send_header("X-Content-Type-Options", "nosniff")
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
@@ -48,7 +51,7 @@ def validate_file_url(url):
         raise ValueError("El enlace debe apuntar directamente a un archivo .rbxm o .rbxmx")
 
 
-def handler(request):
+def handle_upload(request):
     # Vercel Python runtime passes a BaseHTTPRequestHandler-like request.
     if request.command != "POST":
         return json_response(request, 405, {"error": "Usa POST"})
@@ -118,6 +121,12 @@ def handler(request):
         return json_response(request, 500, {"error": "Error interno procesando la subida"})
 
 
-class Handler(BaseHTTPRequestHandler):
+class handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        handler(self)
+        handle_upload(self)
+
+    def do_OPTIONS(self):
+        json_response(self, 200, {"ok": True})
+
+    def do_GET(self):
+        json_response(self, 200, {"ok": True, "route": "/api/upload", "method": "POST required"})
