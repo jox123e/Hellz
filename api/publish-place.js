@@ -1,3 +1,4 @@
+
 const crypto = require("crypto");
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -25,11 +26,7 @@ function getKey() {
 function encrypt(data) {
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv("aes-256-gcm", getKey(), iv);
-
-    const encrypted = Buffer.concat([
-        cipher.update(data),
-        cipher.final()
-    ]);
+    const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
 
     return Buffer.concat([
         Buffer.from("PP01"),
@@ -84,9 +81,11 @@ async function githubRequest(path, method = "GET", body) {
     } catch {}
 
     if (!response.ok) {
-        throw new Error(
+        const error = new Error(
             `GitHub HTTP ${response.status}: ${data.message || "Error"}`
         );
+        error.status = response.status;
+        throw error;
     }
 
     return data;
@@ -105,8 +104,8 @@ async function githubGet(path) {
         `${path}?ref=${encodeURIComponent(BRANCH)}`
     );
 
-    if (!file.content || file.encoding !== "base64") {
-        throw new Error("Archivo de GitHub inválido");
+    if (!file.content || file.encoding !== "base64" || !file.sha) {
+        throw new Error(`Archivo de GitHub inválido: ${path}`);
     }
 
     return {
@@ -117,14 +116,20 @@ async function githubGet(path) {
 
 async function githubDelete(path, sha) {
     return githubRequest(path, "DELETE", {
-        message: "PlacePublisher: eliminar tarea publicada",
+        message: "PlacePublisher: limpiar trabajo temporal",
         sha,
         branch: BRANCH
     });
 }
 
 function validId(value) {
-    return typeof value === "string" && /^\d+$/.test(value);
+    return typeof value === "string" &&
+        /^\d{1,30}$/.test(value);
+}
+
+function validJobId(value) {
+    return typeof value === "string" &&
+        /^[a-f0-9-]{36}$/i.test(value);
 }
 
 function validateFileUrl(value) {
@@ -150,6 +155,7 @@ function validateFileUrl(value) {
 
     return {
         url,
+        extension: extension.toLowerCase(),
         contentType: extension.toLowerCase() === ".rbxlx"
             ? "application/xml"
             : "application/octet-stream"
@@ -179,7 +185,6 @@ async function downloadFile(url) {
 
     while (true) {
         const { done, value } = await reader.read();
-
         if (done) break;
 
         size += value.byteLength;
@@ -197,6 +202,37 @@ async function downloadFile(url) {
     return Buffer.concat(chunks);
 }
 
+async function cleanupJob(jobId, storedName, fileSha, metadataSha) {
+    // Solo elimina los dos archivos de ESTE jobId.
+    const base = `pending/${jobId}`;
+
+    const files = [
+        { path: `${base}/${storedName}.enc`, sha: fileSha },
+        { path: `${base}/metadata.json.enc`, sha: metadataSha }
+    ];
+
+    const deleted = [];
+    const errors = [];
+
+    for (const file of files) {
+        try {
+            await githubDelete(file.path, file.sha);
+            deleted.push(file.path);
+        } catch (error) {
+            errors.push({
+                path: file.path,
+                error: error.message
+            });
+        }
+    }
+
+    return {
+        complete: errors.length === 0,
+        deleted,
+        errors
+    };
+}
+
 module.exports = async function handler(req, res) {
     if (req.method !== "POST") {
         return res.status(405).json({
@@ -209,6 +245,13 @@ module.exports = async function handler(req, res) {
         return res.status(500).json({
             success: false,
             error: "Falta configurar GitHub en Vercel"
+        });
+    }
+
+    if (!ALLOWED_HOSTS.length) {
+        return res.status(500).json({
+            success: false,
+            error: "FILE_HOSTS no está configurado"
         });
     }
 
@@ -229,25 +272,28 @@ module.exports = async function handler(req, res) {
             const originalFile = await downloadFile(fileInfo.url.href);
             const jobId = crypto.randomUUID();
 
-            const extension = fileInfo.contentType === "application/xml"
-                ? "rbxlx"
-                : "rbxl";
+            const extension = fileInfo.extension.slice(1);
+            const storedName = `place.${extension}`;
 
             const metadata = {
                 jobId,
                 placeId,
                 universeId,
                 contentType: fileInfo.contentType,
-                fileName: `place.${extension}`,
+                fileName: storedName,
                 createdAt: new Date().toISOString(),
                 status: "pending"
             };
 
             const base = `pending/${jobId}`;
-            const filePath = `${base}/place.${extension}.enc`;
+            const filePath = `${base}/${storedName}.enc`;
             const metadataPath = `${base}/metadata.json.enc`;
 
-            await githubPut(filePath, encrypt(originalFile));
+            // Cada trabajo crea exactamente dos archivos.
+            const savedFile = await githubPut(
+                filePath,
+                encrypt(originalFile)
+            );
 
             try {
                 await githubPut(
@@ -255,10 +301,15 @@ module.exports = async function handler(req, res) {
                     encrypt(Buffer.from(JSON.stringify(metadata)))
                 );
             } catch (error) {
+                // Si falla el segundo archivo, intenta revertir el primero.
                 try {
-                    const saved = await githubGet(filePath);
-                    await githubDelete(filePath, saved.sha);
-                } catch {}
+                    await githubDelete(filePath, savedFile.content.sha);
+                } catch (cleanupError) {
+                    console.error(
+                        "Falló la limpieza parcial:",
+                        cleanupError.message
+                    );
+                }
 
                 throw error;
             }
@@ -267,14 +318,18 @@ module.exports = async function handler(req, res) {
                 success: true,
                 action: "save",
                 jobId,
-                status: "pending"
+                status: "pending",
+                placeId,
+                universeId,
+                filesCreated: 2,
+                paths: [filePath, metadataPath]
             });
         }
 
         if (body.action === "publish") {
             const { jobId, apiKey } = body;
 
-            if (!/^[a-f0-9-]{36}$/i.test(jobId || "")) {
+            if (!validJobId(jobId)) {
                 return res.status(400).json({
                     success: false,
                     error: "jobId inválido"
@@ -304,7 +359,7 @@ module.exports = async function handler(req, res) {
                 !validId(metadata.placeId) ||
                 !validId(metadata.universeId)
             ) {
-                throw new Error("Metadatos inválidos");
+                throw new Error("Metadatos inválidos para este jobId");
             }
 
             const storedName = metadata.fileName;
@@ -343,49 +398,43 @@ module.exports = async function handler(req, res) {
             });
 
             const text = await publication.text();
-            let result = {};
+            let publishResult = {};
 
             try {
-                result = JSON.parse(text);
+                publishResult = JSON.parse(text);
             } catch {}
 
             if (!publication.ok) {
                 return res.status(502).json({
                     success: false,
-                    error: result.message ||
+                    error: publishResult.message ||
                         `Roblox respondió HTTP ${publication.status}`,
-                    robloxStatus: publication.status
+                    robloxStatus: publication.status,
+                    jobId,
+                    cleanupComplete: false
                 });
             }
 
-            let cleanupComplete = true;
-
-            for (const file of [
-                {
-                    path: `${base}/${storedName}.enc`,
-                    sha: encryptedFile.sha
-                },
-                {
-                    path: `${base}/metadata.json.enc`,
-                    sha: metadataFile.sha
-                }
-            ]) {
-                try {
-                    await githubDelete(file.path, file.sha);
-                } catch {
-                    cleanupComplete = false;
-                }
-            }
+            // Solo se intenta limpiar después de confirmar éxito de Roblox.
+            const cleanup = await cleanupJob(
+                jobId,
+                storedName,
+                encryptedFile.sha,
+                metadataFile.sha
+            );
 
             return res.status(200).json({
                 success: true,
                 action: "publish",
+                status: "published",
                 placeId: metadata.placeId,
                 universeId: metadata.universeId,
                 versionType: "Published",
-                versionNumber: result.versionNumber ?? null,
+                versionNumber: publishResult.versionNumber ?? null,
                 jobId,
-                cleanupComplete
+                cleanupComplete: cleanup.complete,
+                deletedFiles: cleanup.deleted,
+                cleanupErrors: cleanup.errors
             });
         }
 
@@ -398,7 +447,7 @@ module.exports = async function handler(req, res) {
 
         return res.status(500).json({
             success: false,
-            error: "No se pudo completar la operación"
+            error: error.message || "Error interno de PlacePublisher"
         });
     }
 };
