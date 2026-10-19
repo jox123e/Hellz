@@ -1,103 +1,177 @@
-
+```html
 <!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b1020">
-  <title>PlacePublisher · Roblox Open Cloud</title>
+  <title>Roblox Uploader</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<main class="wrap">
-  <header>
-    <div class="logo">R</div>
-    <div>
-      <p class="eyebrow">ROBLOX OPEN CLOUD</p>
-      <h1>PlacePublisher</h1>
-      <p class="sub">Publica archivos .rbxl y .rbxlx directamente en tu Place.</p>
-    </div>
-  </header>
+  <main class="wrap">
+    <header class="header">
+      <div class="logo">R</div>
+      <div class="header-text">
+        <p class="eyebrow">ROBLOX · OPEN CLOUD</p>
+        <h1>Roblox Uploader</h1>
+        <p class="sub">Gestiona assets y publica lugares desde una URL directa.</p>
+      </div>
+    </header>
 
-  <form id="publishForm">
-    <label>
-      Roblox Open Cloud API key
+    <section class="api-card">
+      <label for="apiKey">Roblox API key</label>
       <input
-        name="apiKey"
+        id="apiKey"
         type="password"
         autocomplete="off"
+        spellcheck="false"
+        placeholder="Introduce tu propia API key"
         required
-        placeholder="Introduce tu API key"
       >
-    </label>
+      <p class="hint">La clave se mantiene en memoria mientras usas la página. No la compartas ni la escribas en archivos públicos.</p>
+    </section>
 
-    <div class="grid">
-      <label>
-        Universe ID
+    <nav class="tabs" aria-label="Tipo de operación">
+      <button type="button" class="tab active" data-mode="asset">
+        Asset Uploader
+      </button>
+      <button type="button" class="tab" data-mode="place">
+        Place Publisher
+      </button>
+    </nav>
+
+    <section id="assetPanel" class="panel">
+      <div class="section-heading">
+        <h2>Subir un asset</h2>
+        <p>Sube un modelo desde un enlace directo.</p>
+      </div>
+
+      <form id="assetForm">
+        <label for="ownerType">Tipo de propietario</label>
+        <select id="ownerType" required>
+          <option value="user">Usuario</option>
+          <option value="group">Grupo</option>
+        </select>
+
+        <label for="ownerId">ID del propietario</label>
         <input
-          name="universeId"
+          id="ownerId"
           inputmode="numeric"
           pattern="[0-9]+"
+          placeholder="123456789"
           required
-          value="9157964640"
         >
-      </label>
 
-      <label>
-        Place ID
+        <label for="assetUrl">URL directa del modelo</label>
         <input
-          name="placeId"
+          id="assetUrl"
+          type="url"
+          placeholder="https://.../modelo.rbxmx"
+          required
+        >
+
+        <label for="assetName">Nombre del modelo</label>
+        <input id="assetName" maxlength="50" placeholder="myfile">
+
+        <label for="assetDescription">Descripción</label>
+        <textarea
+          id="assetDescription"
+          rows="3"
+          maxlength="1000"
+          placeholder="Descripción opcional"
+        ></textarea>
+
+        <button id="assetSubmit" class="primary" type="submit">
+          Subir asset
+        </button>
+      </form>
+
+      <div class="endpoint-list">
+        <span><i></i> /api/upload</span>
+        <span><i></i> /api/status</span>
+        <span><i></i> /api/get</span>
+      </div>
+    </section>
+
+    <section id="placePanel" class="panel hidden">
+      <div class="section-heading">
+        <h2>Publicar un lugar</h2>
+        <p>Envía un archivo de lugar a un Place existente.</p>
+      </div>
+
+      <form id="placeForm">
+        <label for="universeId">Universe ID</label>
+        <input
+          id="universeId"
           inputmode="numeric"
           pattern="[0-9]+"
+          placeholder="9157964640"
           required
-          value="113289549640925"
         >
-      </label>
-    </div>
 
-    <label>
-      Enlace directo del archivo
-      <input
-        name="fileUrl"
-        type="url"
-        required
-        placeholder="https://raw.githubusercontent.com/usuario/repo/main/place.rbxl"
-      >
-    </label>
+        <label for="placeId">Place ID</label>
+        <input
+          id="placeId"
+          inputmode="numeric"
+          pattern="[0-9]+"
+          placeholder="113289549640925"
+          required
+        >
 
-    <p class="hint">
-      Formatos aceptados: .rbxl y .rbxlx. Tamaño máximo: 10 MiB.
-    </p>
+        <label for="placeUrl">URL directa del archivo</label>
+        <input
+          id="placeUrl"
+          type="url"
+          placeholder="https://.../place.rbxl"
+          required
+        >
 
-    <label>
-      Tipo de publicación
-      <select name="versionType">
-        <option value="Published">Published — guardar y publicar</option>
-        <option value="Saved">Saved — guardar sin publicar</option>
-      </select>
-    </label>
+        <label for="versionType">Tipo de publicación</label>
+        <select id="versionType" required>
+          <option value="Published">Published — publicar la versión</option>
+          <option value="Saved">Saved — guardar una versión</option>
+        </select>
 
-    <label class="confirm">
-      <input name="confirmPublish" type="checkbox">
-      Confirmo que quiero actualizar el Place seleccionado.
-    </label>
+        <label class="confirm">
+          <input id="confirmPublish" type="checkbox" required>
+          <span>Confirmo que quiero enviar este archivo al lugar indicado.</span>
+        </label>
 
-    <button id="submitBtn" type="submit">Publicar Place</button>
-  </form>
+        <button id="placeSubmit" class="primary" type="submit">
+          Publicar lugar
+        </button>
+      </form>
 
-  <section id="result" class="result" aria-live="polite">
-    <h2>Resultado</h2>
-    <p>Introduce el archivo y los identificadores para comenzar.</p>
-  </section>
+      <p class="hint warning">
+        Verifica el Universe ID, el Place ID y el archivo antes de publicar.
+        Esta operación puede crear una nueva versión del lugar.
+      </p>
+    </section>
 
-  <p class="notice">
-    La clave se envía al backend por HTTPS para realizar la solicitud.
-    Esta página no la guarda intencionadamente, pero puede quedar expuesta
-    en el navegador o durante la solicitud. Utiliza una clave propia y no
-    compartas una página con una clave ya introducida.
-  </p>
-</main>
+    <section class="result" aria-live="polite" aria-atomic="true">
+      <div class="result-top">
+        <div>
+          <p class="eyebrow">OUTPUT</p>
+          <h2 id="resultTitle">Resultado</h2>
+        </div>
+        <button id="copyBtn" class="secondary" type="button" disabled>
+          Copiar
+        </button>
+      </div>
+      <p id="resultMessage" class="result-message">
+        Selecciona una función para comenzar.
+      </p>
+      <pre id="resultData" class="result-data">Esperando operación...</pre>
+    </section>
 
-<script src="script.js"></script>
+    <footer>
+      <p>Roblox Uploader · Open Cloud</p>
+      <p>No introduzcas claves que pertenezcan a otras personas.</p>
+    </footer>
+  </main>
+
+  <script src="script.js"></script>
 </body>
 </html>
+```
