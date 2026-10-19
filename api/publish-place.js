@@ -1,208 +1,182 @@
 
-export default async function handler(req, res) {
+const ALLOWED_HOSTS = (process.env.FILE_HOSTS || "")
+    .split(",")
+    .map(host => host.trim().toLowerCase())
+    .filter(Boolean);
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+module.exports = async function handler(req, res) {
     if (req.method !== "POST") {
         return res.status(405).json({
             success: false,
-            error: "Usa POST"
+            error: "Método no permitido"
+        });
+    }
+
+    const secret = process.env.PUBLISH_SHARED_SECRET;
+
+    if (!secret || req.headers["x-publish-secret"] !== secret) {
+        return res.status(401).json({
+            success: false,
+            error: "No autorizado"
+        });
+    }
+
+    const {
+        placeId,
+        universeId,
+        fileUrl,
+        action,
+        versionType,
+        contentType
+    } = req.body || {};
+
+    if (
+        typeof placeId !== "string" ||
+        !/^\d+$/.test(placeId) ||
+        typeof universeId !== "string" ||
+        !/^\d+$/.test(universeId)
+    ) {
+        return res.status(400).json({
+            success: false,
+            error: "placeId o universeId inválido"
+        });
+    }
+
+    if (action !== "upload" || versionType !== "Published") {
+        return res.status(400).json({
+            success: false,
+            error: "Solo se permite publicar"
+        });
+    }
+
+    if (typeof fileUrl !== "string" || fileUrl.length > 2048) {
+        return res.status(400).json({
+            success: false,
+            error: "URL inválida"
+        });
+    }
+
+    let parsedUrl;
+
+    try {
+        parsedUrl = new URL(fileUrl);
+    } catch {
+        return res.status(400).json({
+            success: false,
+            error: "URL mal formada"
+        });
+    }
+
+    const extension = parsedUrl.pathname.match(/\.rbxlx?$/i)?.[0]
+        ?.toLowerCase();
+
+    if (
+        parsedUrl.protocol !== "https:" ||
+        parsedUrl.username ||
+        parsedUrl.password ||
+        !ALLOWED_HOSTS.includes(parsedUrl.hostname.toLowerCase()) ||
+        !extension
+    ) {
+        return res.status(400).json({
+            success: false,
+            error: "URL o dominio no permitido"
+        });
+    }
+
+    const expectedType = extension === ".rbxlx"
+        ? "application/xml"
+        : "application/octet-stream";
+
+    if (contentType && contentType !== expectedType) {
+        return res.status(400).json({
+            success: false,
+            error: "Tipo de archivo incorrecto"
         });
     }
 
     try {
-        const {
-            mode,
-            placeId,
-            universeId,
-            fileUrl,
-            action = "upload",
-            versionType = "Saved",
-            contentType,
-            options = {}
-        } = req.body || {};
-
-        const apiKey = process.env.ROBLOX_OPEN_CLOUD_API_KEY;
-        const secret = process.env.PUBLISH_SHARED_SECRET;
-
-        if (!apiKey || !secret) {
-            return res.status(500).json({
-                success: false,
-                error: "Configura las variables de entorno"
-            });
-        }
-
-        if (req.headers["x-publish-secret"] !== secret) {
-            return res.status(401).json({
-                success: false,
-                error: "Acceso denegado"
-            });
-        }
-
-        if (!/^\d+$/.test(String(placeId || ""))) {
-            return res.status(400).json({
-                success: false,
-                error: "placeId inválido"
-            });
-        }
-
-        let finalUniverseId = universeId;
-
-        if (mode === "place") {
-            const map = JSON.parse(
-                process.env.PLACE_UNIVERSE_MAP || "{}"
-            );
-            finalUniverseId = map[String(placeId)];
-        } else if (mode !== "universePlace") {
-            return res.status(400).json({
-                success: false,
-                error: "mode inválido"
-            });
-        }
-
-        if (!/^\d+$/.test(String(finalUniverseId || ""))) {
-            return res.status(400).json({
-                success: false,
-                error: "universeId inválido"
-            });
-        }
-
-        if (action !== "upload") {
-            return res.status(400).json({
-                success: false,
-                error: "Esta versión solo admite action=upload"
-            });
-        }
-
-        if (!["Saved", "Published"].includes(versionType)) {
-            return res.status(400).json({
-                success: false,
-                error: "versionType inválido"
-            });
-        }
-
-        if (typeof fileUrl !== "string") {
-            return res.status(400).json({
-                success: false,
-                error: "Falta fileUrl"
-            });
-        }
-
-        const parsedUrl = new URL(fileUrl);
-
-        if (parsedUrl.protocol !== "https:") {
-            return res.status(400).json({
-                success: false,
-                error: "Se requiere HTTPS"
-            });
-        }
-
-        const allowedHosts = (
-            process.env.FILE_HOSTS || ""
-        )
-            .split(",")
-            .map(x => x.trim().toLowerCase())
-            .filter(Boolean);
-
-        if (!allowedHosts.includes(parsedUrl.hostname.toLowerCase())) {
-            return res.status(403).json({
-                success: false,
-                error: "Dominio de archivo no autorizado"
-            });
-        }
-
-        const path = parsedUrl.pathname.toLowerCase();
-        let expectedType;
-
-        if (path.endsWith(".rbxlx")) {
-            expectedType = "application/xml";
-        } else if (path.endsWith(".rbxl")) {
-            expectedType = "application/octet-stream";
-        } else {
-            return res.status(400).json({
-                success: false,
-                error: "La URL debe terminar en .rbxl o .rbxlx"
-            });
-        }
-
-        if (options.validateFileType !== false &&
-            contentType !== expectedType) {
-            return res.status(400).json({
-                success: false,
-                error: "contentType no coincide con la extensión"
-            });
-        }
-
-        const download = await fetch(parsedUrl, {
+        const download = await fetch(parsedUrl.href, {
             redirect: "error",
             signal: AbortSignal.timeout(20000)
         });
 
-        if (!download.ok) {
+        if (!download.ok || !download.body) {
             return res.status(502).json({
                 success: false,
-                error: `Error descargando archivo: ${download.status}`
+                error: `Error descargando archivo: HTTP ${download.status}`
             });
         }
 
-        const maxSize = Math.min(
-            Number(options.maxFileSize) || 10485760,
-            10485760
+        const declaredLength = Number(
+            download.headers.get("content-length")
         );
 
-        const file = Buffer.from(await download.arrayBuffer());
+        if (
+            Number.isFinite(declaredLength) &&
+            declaredLength > MAX_FILE_SIZE
+        ) {
+            await download.body.cancel();
 
-        if (file.length === 0 || file.length > maxSize) {
             return res.status(413).json({
                 success: false,
-                error: "Archivo vacío o demasiado grande"
+                error: "Archivo demasiado grande"
             });
         }
 
-        const endpoint =
-            `https://apis.roblox.com/universes/v1/` +
-            `${finalUniverseId}/places/${placeId}/versions` +
-            `?versionType=${versionType}`;
+        const reader = download.body.getReader();
+        const chunks = [];
+        let total = 0;
 
-        const response = await fetch(endpoint, {
-            method: "POST",
-            headers: {
-                "x-api-key": apiKey,
-                "Content-Type": expectedType
-            },
-            body: file,
-            signal: AbortSignal.timeout(25000)
-        });
+        while (true) {
+            const { done, value } = await reader.read();
 
-        const raw = await response.text();
-        let data;
+            if (done) break;
 
-        try {
-            data = JSON.parse(raw);
-        } catch {
-            data = { message: raw };
+            total += value.byteLength;
+
+            if (total > MAX_FILE_SIZE) {
+                await reader.cancel();
+
+                return res.status(413).json({
+                    success: false,
+                    error: "Archivo supera 10 MiB"
+                });
+            }
+
+            chunks.push(value);
         }
 
-        if (!response.ok) {
-            return res.status(502).json({
+        if (total === 0) {
+            return res.status(400).json({
                 success: false,
-                error: "Roblox rechazó la publicación",
-                robloxStatus: response.status,
-                details: data
+                error: "Archivo vacío"
             });
         }
 
-        return res.status(200).json({
-            success: true,
-            action,
-            placeId: String(placeId),
-            universeId: String(finalUniverseId),
-            versionType,
-            versionNumber: data.versionNumber ?? null
+        const file = new Uint8Array(total);
+        let offset = 0;
+
+        for (const chunk of chunks) {
+            file.set(chunk, offset);
+            offset += chunk.byteLength;
+        }
+
+        // Este endpoint no puede publicar sin autenticación de Roblox.
+        // La publicación debe realizarse mediante un servicio autorizado.
+        return res.status(501).json({
+            success: false,
+            error: "Falta configurar la autenticación de Roblox Open Cloud"
         });
     } catch (error) {
-        console.error("PublishPlace:", error);
+        console.error("Publication error:", error.name);
 
         return res.status(500).json({
             success: false,
-            error: "Error interno del servidor"
+            error: error.name === "TimeoutError"
+                ? "Tiempo de espera agotado"
+                : "Error procesando el archivo"
         });
     }
-}
+};
