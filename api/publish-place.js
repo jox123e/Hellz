@@ -1,453 +1,207 @@
 
-const crypto = require("crypto");
-
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
-const ALLOWED_HOSTS = (process.env.FILE_HOSTS || "")
-    .split(",")
-    .map(host => host.trim().toLowerCase())
-    .filter(Boolean);
-
-const OWNER = process.env.GITHUB_OWNER;
-const REPO = process.env.GITHUB_REPO;
-const BRANCH = process.env.GITHUB_BRANCH || "main";
-const TOKEN = process.env.GITHUB_TOKEN;
-
-function getKey() {
-    const key = process.env.ENCRYPTION_KEY || "";
-
-    if (!/^[a-f0-9]{64}$/i.test(key)) {
-        throw new Error("ENCRYPTION_KEY debe tener 64 caracteres hexadecimales");
-    }
-
-    return Buffer.from(key, "hex");
-}
-
-function encrypt(data) {
-    const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv("aes-256-gcm", getKey(), iv);
-    const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
-
-    return Buffer.concat([
-        Buffer.from("PP01"),
-        iv,
-        cipher.getAuthTag(),
-        encrypted
-    ]);
-}
-
-function decrypt(data) {
-    const buffer = Buffer.from(data);
-
-    if (buffer.subarray(0, 4).toString() !== "PP01") {
-        throw new Error("Formato cifrado inválido");
-    }
-
-    const decipher = crypto.createDecipheriv(
-        "aes-256-gcm",
-        getKey(),
-        buffer.subarray(4, 16)
-    );
-
-    decipher.setAuthTag(buffer.subarray(16, 32));
-
-    return Buffer.concat([
-        decipher.update(buffer.subarray(32)),
-        decipher.final()
-    ]);
-}
-
-async function githubRequest(path, method = "GET", body) {
-    const response = await fetch(
-        `https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}`,
-        {
-            method,
-            headers: {
-                Authorization: `Bearer ${TOKEN}`,
-                Accept: "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "Content-Type": "application/json"
-            },
-            ...(body ? { body: JSON.stringify(body) } : {}),
-            signal: AbortSignal.timeout(25000)
-        }
-    );
-
-    const text = await response.text();
-    let data = {};
-
-    try {
-        data = JSON.parse(text);
-    } catch {}
-
-    if (!response.ok) {
-        const error = new Error(
-            `GitHub HTTP ${response.status}: ${data.message || "Error"}`
-        );
-        error.status = response.status;
-        throw error;
-    }
-
-    return data;
-}
-
-async function githubPut(path, bytes) {
-    return githubRequest(path, "PUT", {
-        message: "PlacePublisher: guardar tarea cifrada",
-        branch: BRANCH,
-        content: Buffer.from(bytes).toString("base64")
-    });
-}
-
-async function githubGet(path) {
-    const file = await githubRequest(
-        `${path}?ref=${encodeURIComponent(BRANCH)}`
-    );
-
-    if (!file.content || file.encoding !== "base64" || !file.sha) {
-        throw new Error(`Archivo de GitHub inválido: ${path}`);
-    }
-
-    return {
-        bytes: Buffer.from(file.content.replace(/\n/g, ""), "base64"),
-        sha: file.sha
-    };
-}
-
-async function githubDelete(path, sha) {
-    return githubRequest(path, "DELETE", {
-        message: "PlacePublisher: limpiar trabajo temporal",
-        sha,
-        branch: BRANCH
-    });
+function sendJson(res, status, body) {
+  return res.status(status).json(body);
 }
 
 function validId(value) {
-    return typeof value === "string" &&
-        /^\d{1,30}$/.test(value);
+  return typeof value === "string" && /^\d+$/.test(value);
 }
 
-function validJobId(value) {
-    return typeof value === "string" &&
-        /^[a-f0-9-]{36}$/i.test(value);
-}
+function getFileInfo(fileUrl) {
+  let parsed;
 
-function validateFileUrl(value) {
-    let url;
+  try {
+    parsed = new URL(fileUrl);
+  } catch {
+    throw new Error("La URL del archivo no es válida.");
+  }
 
-    try {
-        url = new URL(value);
-    } catch {
-        throw new Error("URL de archivo inválida");
-    }
+  if (parsed.protocol !== "https:") {
+    throw new Error("El enlace debe utilizar HTTPS.");
+  }
 
-    const extension = url.pathname.match(/\.rbxlx?$/i)?.[0];
+  if (parsed.hostname !== "raw.githubusercontent.com") {
+    throw new Error("Solo se permiten enlaces raw.githubusercontent.com.");
+  }
 
-    if (
-        url.protocol !== "https:" ||
-        url.username ||
-        url.password ||
-        !ALLOWED_HOSTS.includes(url.hostname.toLowerCase()) ||
-        !extension
-    ) {
-        throw new Error("URL o dominio de archivo no permitido");
-    }
+  const pathname = parsed.pathname.toLowerCase();
 
+  if (pathname.endsWith(".rbxlx")) {
     return {
-        url,
-        extension: extension.toLowerCase(),
-        contentType: extension.toLowerCase() === ".rbxlx"
-            ? "application/xml"
-            : "application/octet-stream"
+      contentType: "application/xml",
+      extension: ".rbxlx"
     };
+  }
+
+  if (pathname.endsWith(".rbxl")) {
+    return {
+      contentType: "application/octet-stream",
+      extension: ".rbxl"
+    };
+  }
+
+  throw new Error("El archivo debe terminar en .rbxl o .rbxlx.");
 }
 
-async function downloadFile(url) {
-    const response = await fetch(url, {
-        redirect: "error",
-        signal: AbortSignal.timeout(20000)
+async function downloadPlace(fileUrl) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25000);
+
+  try {
+    const response = await fetch(fileUrl, {
+      method: "GET",
+      redirect: "error",
+      signal: controller.signal
     });
 
-    if (!response.ok || !response.body) {
-        throw new Error(`Descarga fallida: HTTP ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`No se pudo descargar el archivo: HTTP ${response.status}`);
     }
 
-    const length = Number(response.headers.get("content-length"));
+    const declaredSize = Number(response.headers.get("content-length") || 0);
 
-    if (Number.isFinite(length) && length > MAX_FILE_SIZE) {
-        await response.body.cancel();
-        throw new Error("Archivo supera 10 MiB");
+    if (declaredSize > MAX_FILE_SIZE) {
+      throw new Error("El archivo supera el límite de 10 MiB.");
+    }
+
+    if (!response.body) {
+      throw new Error("La descarga no contiene datos.");
     }
 
     const reader = response.body.getReader();
     const chunks = [];
-    let size = 0;
+    let totalSize = 0;
 
     while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      const { done, value } = await reader.read();
 
-        size += value.byteLength;
+      if (done) break;
 
-        if (size > MAX_FILE_SIZE) {
-            await reader.cancel();
-            throw new Error("Archivo supera 10 MiB");
-        }
+      totalSize += value.byteLength;
 
-        chunks.push(Buffer.from(value));
+      if (totalSize > MAX_FILE_SIZE) {
+        await reader.cancel();
+        throw new Error("El archivo supera el límite de 10 MiB.");
+      }
+
+      chunks.push(Buffer.from(value));
     }
 
-    if (!size) throw new Error("Archivo vacío");
-
-    return Buffer.concat(chunks);
-}
-
-async function cleanupJob(jobId, storedName, fileSha, metadataSha) {
-    // Solo elimina los dos archivos de ESTE jobId.
-    const base = `pending/${jobId}`;
-
-    const files = [
-        { path: `${base}/${storedName}.enc`, sha: fileSha },
-        { path: `${base}/metadata.json.enc`, sha: metadataSha }
-    ];
-
-    const deleted = [];
-    const errors = [];
-
-    for (const file of files) {
-        try {
-            await githubDelete(file.path, file.sha);
-            deleted.push(file.path);
-        } catch (error) {
-            errors.push({
-                path: file.path,
-                error: error.message
-            });
-        }
+    if (totalSize === 0) {
+      throw new Error("El archivo descargado está vacío.");
     }
 
-    return {
-        complete: errors.length === 0,
-        deleted,
-        errors
-    };
+    return Buffer.concat(chunks, totalSize);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 module.exports = async function handler(req, res) {
-    if (req.method !== "POST") {
-        return res.status(405).json({
-            success: false,
-            error: "Método no permitido"
-        });
-    }
+  res.setHeader("Cache-Control", "no-store");
 
-    if (!OWNER || !REPO || !TOKEN) {
-        return res.status(500).json({
-            success: false,
-            error: "Falta configurar GitHub en Vercel"
-        });
-    }
+  if (req.method !== "POST") {
+    res.setHeader("Allow", "POST");
+    return sendJson(res, 405, {
+      success: false,
+      error: "Método no permitido."
+    });
+  }
 
-    if (!ALLOWED_HOSTS.length) {
-        return res.status(500).json({
-            success: false,
-            error: "FILE_HOSTS no está configurado"
-        });
-    }
-
+  try {
     const body = req.body || {};
 
-    try {
-        if (body.action === "save") {
-            const { fileUrl, placeId, universeId } = body;
+    const apiKey = typeof body.apiKey === "string"
+      ? body.apiKey.trim()
+      : "";
 
-            if (!validId(placeId) || !validId(universeId)) {
-                return res.status(400).json({
-                    success: false,
-                    error: "PlaceId o UniverseId inválido"
-                });
-            }
+    const { placeId, universeId, fileUrl } = body;
+    const versionType = body.versionType || "Published";
 
-            const fileInfo = validateFileUrl(fileUrl);
-            const originalFile = await downloadFile(fileInfo.url.href);
-            const jobId = crypto.randomUUID();
-
-            const extension = fileInfo.extension.slice(1);
-            const storedName = `place.${extension}`;
-
-            const metadata = {
-                jobId,
-                placeId,
-                universeId,
-                contentType: fileInfo.contentType,
-                fileName: storedName,
-                createdAt: new Date().toISOString(),
-                status: "pending"
-            };
-
-            const base = `pending/${jobId}`;
-            const filePath = `${base}/${storedName}.enc`;
-            const metadataPath = `${base}/metadata.json.enc`;
-
-            // Cada trabajo crea exactamente dos archivos.
-            const savedFile = await githubPut(
-                filePath,
-                encrypt(originalFile)
-            );
-
-            try {
-                await githubPut(
-                    metadataPath,
-                    encrypt(Buffer.from(JSON.stringify(metadata)))
-                );
-            } catch (error) {
-                // Si falla el segundo archivo, intenta revertir el primero.
-                try {
-                    await githubDelete(filePath, savedFile.content.sha);
-                } catch (cleanupError) {
-                    console.error(
-                        "Falló la limpieza parcial:",
-                        cleanupError.message
-                    );
-                }
-
-                throw error;
-            }
-
-            return res.status(200).json({
-                success: true,
-                action: "save",
-                jobId,
-                status: "pending",
-                placeId,
-                universeId,
-                filesCreated: 2,
-                paths: [filePath, metadataPath]
-            });
-        }
-
-        if (body.action === "publish") {
-            const { jobId, apiKey } = body;
-
-            if (!validJobId(jobId)) {
-                return res.status(400).json({
-                    success: false,
-                    error: "jobId inválido"
-                });
-            }
-
-            if (typeof apiKey !== "string" || !apiKey.trim()) {
-                return res.status(400).json({
-                    success: false,
-                    error: "Falta la credencial de Roblox"
-                });
-            }
-
-            const base = `pending/${jobId}`;
-
-            const metadataFile = await githubGet(
-                `${base}/metadata.json.enc`
-            );
-
-            const metadata = JSON.parse(
-                decrypt(metadataFile.bytes).toString("utf8")
-            );
-
-            if (
-                metadata.jobId !== jobId ||
-                metadata.status !== "pending" ||
-                !validId(metadata.placeId) ||
-                !validId(metadata.universeId)
-            ) {
-                throw new Error("Metadatos inválidos para este jobId");
-            }
-
-            const storedName = metadata.fileName;
-
-            if (!["place.rbxl", "place.rbxlx"].includes(storedName)) {
-                throw new Error("Nombre de archivo inválido");
-            }
-
-            const encryptedFile = await githubGet(
-                `${base}/${storedName}.enc`
-            );
-
-            const originalFile = decrypt(encryptedFile.bytes);
-
-            if (
-                originalFile.length === 0 ||
-                originalFile.length > MAX_FILE_SIZE
-            ) {
-                throw new Error("Tamaño de archivo inválido");
-            }
-
-            const publishUrl =
-                `https://apis.roblox.com/universes/v1/` +
-                `${metadata.universeId}/places/${metadata.placeId}` +
-                `/versions?versionType=Published`;
-
-            const publication = await fetch(publishUrl, {
-                method: "POST",
-                headers: {
-                    "x-api-key": apiKey,
-                    "Content-Type": metadata.contentType,
-                    Accept: "application/json"
-                },
-                body: originalFile,
-                signal: AbortSignal.timeout(25000)
-            });
-
-            const text = await publication.text();
-            let publishResult = {};
-
-            try {
-                publishResult = JSON.parse(text);
-            } catch {}
-
-            if (!publication.ok) {
-                return res.status(502).json({
-                    success: false,
-                    error: publishResult.message ||
-                        `Roblox respondió HTTP ${publication.status}`,
-                    robloxStatus: publication.status,
-                    jobId,
-                    cleanupComplete: false
-                });
-            }
-
-            // Solo se intenta limpiar después de confirmar éxito de Roblox.
-            const cleanup = await cleanupJob(
-                jobId,
-                storedName,
-                encryptedFile.sha,
-                metadataFile.sha
-            );
-
-            return res.status(200).json({
-                success: true,
-                action: "publish",
-                status: "published",
-                placeId: metadata.placeId,
-                universeId: metadata.universeId,
-                versionType: "Published",
-                versionNumber: publishResult.versionNumber ?? null,
-                jobId,
-                cleanupComplete: cleanup.complete,
-                deletedFiles: cleanup.deleted,
-                cleanupErrors: cleanup.errors
-            });
-        }
-
-        return res.status(400).json({
-            success: false,
-            error: "action debe ser save o publish"
-        });
-    } catch (error) {
-        console.error("PlacePublisher:", error.message);
-
-        return res.status(500).json({
-            success: false,
-            error: error.message || "Error interno de PlacePublisher"
-        });
+    if (!apiKey) {
+      return sendJson(res, 400, {
+        success: false,
+        error: "Falta el Roblox Open Cloud API key."
+      });
     }
+
+    if (!validId(placeId) || !validId(universeId)) {
+      return sendJson(res, 400, {
+        success: false,
+        error: "Place ID o Universe ID inválido."
+      });
+    }
+
+    if (versionType !== "Published" && versionType !== "Saved") {
+      return sendJson(res, 400, {
+        success: false,
+        error: "versionType debe ser Published o Saved."
+      });
+    }
+
+    const fileInfo = getFileInfo(fileUrl);
+    const fileBuffer = await downloadPlace(fileUrl);
+
+    const robloxUrl =
+      `https://apis.roblox.com/universes/v1/${universeId}` +
+      `/places/${placeId}/versions?versionType=${versionType}`;
+
+    const robloxResponse = await fetch(robloxUrl, {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "Content-Type": fileInfo.contentType
+      },
+      body: fileBuffer
+    });
+
+    const responseText = await robloxResponse.text();
+
+    let robloxData = {};
+
+    try {
+      robloxData = responseText ? JSON.parse(responseText) : {};
+    } catch {
+      robloxData = {};
+    }
+
+    if (!robloxResponse.ok) {
+      const messages = {
+        400: "Roblox rechazó el archivo. Comprueba el formato y su contenido.",
+        401: "API key inválida o sin autorización para esta operación.",
+        403: "Roblox no permite publicar en este Place.",
+        404: "No se encontró el Place o la experiencia.",
+        409: "El Place no pertenece al Universe indicado."
+      };
+
+      return sendJson(res, robloxResponse.status, {
+        success: false,
+        error: messages[robloxResponse.status] ||
+          `Roblox Open Cloud respondió HTTP ${robloxResponse.status}.`,
+        details: robloxData
+      });
+    }
+
+    return sendJson(res, 200, {
+      success: true,
+      message: versionType === "Published"
+        ? "Roblox confirmó la publicación."
+        : "Roblox confirmó que el archivo se guardó.",
+      placeId,
+      universeId,
+      versionType,
+      versionNumber: robloxData.versionNumber ?? null
+    });
+  } catch (error) {
+    const isAbort = error && error.name === "AbortError";
+
+    return sendJson(res, 400, {
+      success: false,
+      error: isAbort
+        ? "La descarga tardó demasiado."
+        : error.message || "Error interno al procesar el archivo."
+    });
+  }
 };
