@@ -1,21 +1,103 @@
+
 <!doctype html>
 <html lang="es">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Roblox Asset Uploader</title><link rel="stylesheet" href="style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1020">
+  <title>PlacePublisher · Roblox Open Cloud</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <main class="wrap">
-  <header><div class="logo">R</div><div><p class="eyebrow">OPEN CLOUD · ROBLOX</p><h1>Asset Uploader</h1><p class="sub">Publica modelos desde un enlace directo .rbxm o .rbxmx.</p></div></header>
-  <form id="uploadForm">
-    <label>Roblox API key <input name="apiKey" type="password" autocomplete="off" required placeholder="Introduce tu propia API key"></label>
-    <div class="grid"><label>Tipo de propietario<select name="ownerType"><option value="user">Usuario</option><option value="group">Grupo</option></select></label><label>ID del propietario<input name="ownerId" required inputmode="numeric" placeholder="123456789"></label></div>
-    <label>Enlace directo del archivo<input name="fileUrl" type="url" required placeholder="https://.../modelo.rbxmx"></label>
-    <label>Nombre del modelo<input name="name" maxlength="50" placeholder="myfile"></label>
-    <label>Descripción<textarea name="description" rows="3" maxlength="1000" placeholder="Descripción opcional"></textarea></label>
-    <button id="submitBtn" type="submit">Subir modelo</button>
+  <header>
+    <div class="logo">R</div>
+    <div>
+      <p class="eyebrow">ROBLOX OPEN CLOUD</p>
+      <h1>PlacePublisher</h1>
+      <p class="sub">Publica archivos .rbxl y .rbxlx directamente en tu Place.</p>
+    </div>
+  </header>
+
+  <form id="publishForm">
+    <label>
+      Roblox Open Cloud API key
+      <input
+        name="apiKey"
+        type="password"
+        autocomplete="off"
+        required
+        placeholder="Introduce tu API key"
+      >
+    </label>
+
+    <div class="grid">
+      <label>
+        Universe ID
+        <input
+          name="universeId"
+          inputmode="numeric"
+          pattern="[0-9]+"
+          required
+          value="9157964640"
+        >
+      </label>
+
+      <label>
+        Place ID
+        <input
+          name="placeId"
+          inputmode="numeric"
+          pattern="[0-9]+"
+          required
+          value="113289549640925"
+        >
+      </label>
+    </div>
+
+    <label>
+      Enlace directo del archivo
+      <input
+        name="fileUrl"
+        type="url"
+        required
+        placeholder="https://raw.githubusercontent.com/usuario/repo/main/place.rbxl"
+      >
+    </label>
+
+    <p class="hint">
+      Formatos aceptados: .rbxl y .rbxlx. Tamaño máximo: 10 MiB.
+    </p>
+
+    <label>
+      Tipo de publicación
+      <select name="versionType">
+        <option value="Published">Published — guardar y publicar</option>
+        <option value="Saved">Saved — guardar sin publicar</option>
+      </select>
+    </label>
+
+    <label class="confirm">
+      <input name="confirmPublish" type="checkbox">
+      Confirmo que quiero actualizar el Place seleccionado.
+    </label>
+
+    <button id="submitBtn" type="submit">Publicar Place</button>
   </form>
-  <section id="result" class="result" aria-live="polite"><h2>Resultado</h2><p>Completa el formulario para iniciar una subida.</p></section>
-  <p class="notice">La página no almacena la API key intencionadamente. Solo se envía al backend por HTTPS para hacer la solicitud. No uses claves de otras personas ni compartas esta página con una clave ya escrita.</p>
-</main><script src="script.js"></script>
-</body></html>
+
+  <section id="result" class="result" aria-live="polite">
+    <h2>Resultado</h2>
+    <p>Introduce el archivo y los identificadores para comenzar.</p>
+  </section>
+
+  <p class="notice">
+    La clave se envía al backend por HTTPS para realizar la solicitud.
+    Esta página no la guarda intencionadamente, pero puede quedar expuesta
+    en el navegador o durante la solicitud. Utiliza una clave propia y no
+    compartas una página con una clave ya introducida.
+  </p>
+</main>
+
+<script src="script.js"></script>
+</body>
+</html>
