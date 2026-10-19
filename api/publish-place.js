@@ -14,23 +14,23 @@ module.exports = async function handler(req, res) {
         });
     }
 
-    const secret = process.env.PUBLISH_SHARED_SECRET;
-
-    if (!secret || req.headers["x-publish-secret"] !== secret) {
-        return res.status(401).json({
-            success: false,
-            error: "No autorizado"
-        });
-    }
-
     const {
+        mode,
         placeId,
         universeId,
         fileUrl,
         action,
         versionType,
-        contentType
+        contentType,
+        options = {}
     } = req.body || {};
+
+    if (mode !== "universePlace") {
+        return res.status(400).json({
+            success: false,
+            error: "Modo inválido"
+        });
+    }
 
     if (
         typeof placeId !== "string" ||
@@ -40,14 +40,14 @@ module.exports = async function handler(req, res) {
     ) {
         return res.status(400).json({
             success: false,
-            error: "placeId o universeId inválido"
+            error: "PlaceId o UniverseId inválido"
         });
     }
 
     if (action !== "upload" || versionType !== "Published") {
         return res.status(400).json({
             success: false,
-            error: "Solo se permite publicar"
+            error: "Solo se permite publicar con versionType Published"
         });
     }
 
@@ -65,7 +65,7 @@ module.exports = async function handler(req, res) {
     } catch {
         return res.status(400).json({
             success: false,
-            error: "URL mal formada"
+            error: "La URL no es válida"
         });
     }
 
@@ -81,7 +81,7 @@ module.exports = async function handler(req, res) {
     ) {
         return res.status(400).json({
             success: false,
-            error: "URL o dominio no permitido"
+            error: "Dominio o extensión de archivo no permitidos"
         });
     }
 
@@ -89,12 +89,20 @@ module.exports = async function handler(req, res) {
         ? "application/xml"
         : "application/octet-stream";
 
-    if (contentType && contentType !== expectedType) {
+    if (
+        options.validateFileType !== false &&
+        contentType !== expectedType
+    ) {
         return res.status(400).json({
             success: false,
-            error: "Tipo de archivo incorrecto"
+            error: "El tipo de archivo no coincide"
         });
     }
+
+    const requestedLimit = Number(options.maxFileSize);
+    const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? Math.min(requestedLimit, MAX_FILE_SIZE)
+        : MAX_FILE_SIZE;
 
     try {
         const download = await fetch(parsedUrl.href, {
@@ -105,7 +113,7 @@ module.exports = async function handler(req, res) {
         if (!download.ok || !download.body) {
             return res.status(502).json({
                 success: false,
-                error: `Error descargando archivo: HTTP ${download.status}`
+                error: `Error al descargar: HTTP ${download.status}`
             });
         }
 
@@ -115,13 +123,13 @@ module.exports = async function handler(req, res) {
 
         if (
             Number.isFinite(declaredLength) &&
-            declaredLength > MAX_FILE_SIZE
+            declaredLength > limit
         ) {
             await download.body.cancel();
 
             return res.status(413).json({
                 success: false,
-                error: "Archivo demasiado grande"
+                error: "El archivo supera el límite permitido"
             });
         }
 
@@ -136,12 +144,12 @@ module.exports = async function handler(req, res) {
 
             total += value.byteLength;
 
-            if (total > MAX_FILE_SIZE) {
+            if (total > limit) {
                 await reader.cancel();
 
                 return res.status(413).json({
                     success: false,
-                    error: "Archivo supera 10 MiB"
+                    error: "El archivo supera el límite permitido"
                 });
             }
 
@@ -151,7 +159,7 @@ module.exports = async function handler(req, res) {
         if (total === 0) {
             return res.status(400).json({
                 success: false,
-                error: "Archivo vacío"
+                error: "El archivo está vacío"
             });
         }
 
@@ -163,14 +171,14 @@ module.exports = async function handler(req, res) {
             offset += chunk.byteLength;
         }
 
-        // Este endpoint no puede publicar sin autenticación de Roblox.
-        // La publicación debe realizarse mediante un servicio autorizado.
+        // La publicación requiere autenticación de Roblox Open Cloud.
+        // Este endpoint no tiene credenciales configuradas.
         return res.status(501).json({
             success: false,
             error: "Falta configurar la autenticación de Roblox Open Cloud"
         });
     } catch (error) {
-        console.error("Publication error:", error.name);
+        console.error("PublishPlace:", error.name);
 
         return res.status(500).json({
             success: false,
